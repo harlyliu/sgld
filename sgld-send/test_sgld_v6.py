@@ -4,6 +4,7 @@ import numpy as np
 import torch
 
 from SGLD_v5 import SgldBayesianRegression as V5
+from SGLD_v6 import SgldBayesianRegression as V6
 from model import STGPNeuralNetwork, NeuralNetwork, LinearRegression
 from utils import generate_linear_data
 from GP_comp.GP import generate_grids, gp_eigen_funcs_fast, gp_eigen_value
@@ -18,19 +19,19 @@ def test_stgp(in_feature):
     # Step 1: Generate synthetic data (input_size = number of voxels)
     X, y, true_weights, true_bias = generate_linear_data(n=1000, in_features=in_feature, noise_std=1.0)
     print(f"Shape of X: {X.shape}")
+
     # Step 2: Generate spatial grid matching input features (voxels)
     # Example: 1D grid with `in_feature` points from -1 to 1
     grids = generate_grids(d=1, num_grids=in_feature, grids_lim=(-1, 1))
 
     # Step 3: Define STGP parameters
-    poly_degree = 15
+    poly_degree = 22
     a = 0.01
     b = 1.0
     d = 1
     nu = 0.1
-    sigma_lambda_squared = 1.1
+    sigma_lambda_squared = 1.1  # Initial value for sigma_lambda_squared
 
-    # Step 4: Instantiate STGP Neural Network (eigen computations done internally)
     model = STGPNeuralNetwork(
         grids=grids,
         hidden_unit_list=[5, 1],
@@ -39,12 +40,12 @@ def test_stgp(in_feature):
         b=b,
         d=d,
         nu=nu,
-        sigma_lambda_squared=sigma_lambda_squared,
+        sigma_lambda_squared=sigma_lambda_squared,  # Passed here for the initial value
         device='cpu'
     )
 
-    # Step 5: Train using SGLD
-    c = V5(
+    # Step 5: Train using SGLD (Now using v6 for training)
+    c = V6(
         a=2.0,
         b=1.0,
         a_beta=2.0,
@@ -63,6 +64,7 @@ def test_stgp(in_feature):
     print(f"true_weight={true_weights} true_bias={true_bias}")
     print(f"X={inputs} Y(predicted)={c.predict(inputs)} Y(expected)={sum(true_weights) + true_bias}")
     print(f"X={inputs} Y(predicted)={c.predict(inputs, method='param_avg')} Y(expected)={sum(true_weights) + true_bias}")
+
 
 def test_neural(in_feature):
     # Generate synthetic data
