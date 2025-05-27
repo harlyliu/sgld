@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import STGP_input_layer
-from SGLD_v5 import sample_inverse_gamma
+from SGLD_v6 import sample_inverse_gamma
 
 
 class LinearRegression(nn.Module):
@@ -65,6 +65,7 @@ class STGPNeuralNetwork(nn.Module):
         super().__init__()
         self.device = device
 
+        # Initialize SpatialSTGPInputLayer with sigma_lambda_squared and other parameters
         self.input_layer = STGP_input_layer.SpatialSTGPInputLayer(
             num_units=hidden_unit_list[0],
             grids=grids,
@@ -86,10 +87,10 @@ class STGPNeuralNetwork(nn.Module):
             layers.append(nn.ReLU())
             input_size = units
 
-        layers.pop()  # remove final ReLU for output layer
+        layers.pop()  # Remove the final ReLU for the output layer
 
         self.all_layers = nn.Sequential(*layers).to(device)
 
     def forward(self, x):
-        #x = self.input_layer(x)
+        # Forward pass through the layers
         return self.all_layers(x)
