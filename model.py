@@ -59,72 +59,7 @@ class NeuralNetwork(nn.Module):
         return self.sequential(x)
 
 
-# class STGPNeuralNetwork(nn.Module):
-#     def __init__(self, grids, fully_connected_layers,
-#                  poly_degree=10, a=0.01, b=1.0, dimensions=2,
-#                  nu=0.1, a_theta=2.0, b_theta=1.0, a_lambda=2.0, b_lambda=1.0, device='cpu'):
-#         """
-#         Neural Network Class that implements Spatially Varying Weights
-#         :param grids: tensor that holds the coordinates of each where input coordinates are defined
-#         :param fully_connected_layers:how many units must be in each layer
-#         :param poly_degree:how many degrees the eigen value should be calculated to
-#         :param a:left endpoint of the spatial domain
-#         :param b:right endpoint of the spatial domain
-#         :param dimensions:determines the amount of dimensions in GP
-#         :param nu:soft threshold
-#         :param device:which device the neural network is ran on
-#         """
-#         super().__init__()
-#         self.device = device
-#
-#         # Initialize SpatialSTGPInputLayer with sigma_lambda_squared and other parameters
-#         self.input_layer = SpatialSTGPInputLayer(
-#             num_of_units_in_top_layer_of_fully_connected_layers=fully_connected_layers[0],
-#             grids=grids,
-#             poly_degree=poly_degree,
-#             a=a,
-#             b=b,
-#             dimensions=dimensions,
-#             nu=nu,
-#             a_lambda=a_lambda,
-#             b_lambda=b_lambda,
-#             device=device
-#         )
-#
-#         layers = []
-#         layers.append(self.input_layer)
-#         input_size = fully_connected_layers[0]
-#
-#         for units in fully_connected_layers[1:]:
-#             layers.append(nn.Linear(input_size, units))
-#             layers.append(nn.ReLU())
-#             input_size = units
-#
-#         layers.pop()  # Remove the final ReLU for the output layer
-#
-#         self.all_layers = nn.Sequential(*layers).to(device)
-#
-#         self._initializeSigmaThetaSquared(a_theta, b_theta)
-#
-#     def _initializeSigmaThetaSquared(self, a_theta=2.0, b_theta=1.0):
-#         # --- Sample sigma_theta_squared ---
-#         sigma_theta_squared = sample_inverse_gamma(a_theta, b_theta)
-#         sigma_theta = math.sqrt(sigma_theta_squared)
-#
-#         # --- Initialize weights of all nn.Linear layers ---
-#         for m in self.all_layers.modules():
-#             if isinstance(m, nn.Linear):
-#                 nn.init.normal_(m.weight.data, mean=0, std=sigma_theta)
-#                 if m.bias is not None:
-#                     nn.init.normal_(m.bias.data, mean=0, std=sigma_theta)
-#         self.input_layer.ksi.data = torch.normal(mean=0, std=sigma_theta, size=self.input_layer.ksi.size(), device=self.device)
-#
-#     def forward(self, X):
-#         # Forward pass through the layers
-#         return self.all_layers(X)
-
-
-class STGPNeuralNetworkDummy(nn.Module):
+class STGPNeuralNetwork(nn.Module):
     def __init__(
             self,
             in_feature,
@@ -148,7 +83,7 @@ class STGPNeuralNetworkDummy(nn.Module):
         self.device = device
         self.input_layer = SpatialSTGPInputLayer(
             in_feature=in_feature,
-            num_of_units_in_top_layer_of_fully_connected_layers=4,
+            num_of_units_in_top_layer_of_fully_connected_layers=fully_connected_layers[0],
             grids=grids,
             poly_degree=poly_degree,
             a=a,
@@ -163,17 +98,12 @@ class STGPNeuralNetworkDummy(nn.Module):
         )
         # Build the rest using NeuralNetwork
         self.fc = NeuralNetwork(
-            input_size=4,
-            hidden_unit_list=tuple(fully_connected_layers),
+            input_size=fully_connected_layers[0],
+            hidden_unit_list=tuple(fully_connected_layers[1:]),
             a_theta=a_theta,
             b_theta=b_theta
         ).to(device)
 
     def forward(self, X):
-        print(f'STGPNeuralNetworkDummy::forward: X.shape={X.shape}')
-        # print(f'forward:: X={X}')
         z = self.input_layer(X)  # applies fixed theta & ksi, plus ReLU
-        # print(f'forward:: z={z}')
         return self.fc(z)
-        # return self.fc(X)
-
