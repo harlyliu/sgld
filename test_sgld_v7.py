@@ -4,9 +4,9 @@ import numpy as np
 import torch
 
 from SGLD_v7 import SgldBayesianRegression as V7
-from model import STGPNeuralNetworkDummy
+from model import STGPNeuralNetwork
 from utils import generate_linear_data
-from GP_comp.GP import generate_grids, gp_eigen_funcs_fast, gp_eigen_value
+from GP_comp.GP import generate_grids
 
 
 # Set random seed for reproducibility
@@ -16,38 +16,42 @@ np.random.seed(42)
 
 
 def test_stgp(in_feature):
-    # Step 1: Generate synthetic data
-    X, y, true_weights, true_bias = generate_linear_data(n=1000, in_features=in_feature, noise_std=1.0)
-    print(f"Shape of X: {X.shape}")
 
-    # Step 2: Generate spatial grid
-    grids = generate_grids(dimensions=1, num_grids=in_feature, grids_lim=(-1, 1))
-
-    # Step 3: Define parameters
-    fully_connected_layers = [5, 1]
+    # Step 1: Define parameters
+    fully_connected_layers = [in_feature, 10, 1]
     poly_degree = 22
     a = 0.01
     b = 1.0
-    d = 1
+    dimensions = 1
     nu = 0.001
-    a_beta = 2.0
-    b_beta = 1.0
+    a_theta = 2.0
+    b_theta = 1.0
     a_lambda = 2.0
     b_lambda = 1.0
     device = 'cpu'
 
+    # Step 2: Generate synthetic data
+    if dimensions == 1:
+        X, y, true_weights, true_bias = generate_linear_data(n=1000, in_features=in_feature, noise_std=1.0)
+        print(f"Shape of X: {X.shape}")
+
+        # Step 3: Generate spatial grid
+        grids = generate_grids(dimensions=dimensions, num_grids=in_feature, grids_lim=(-1, 1))
+    else:
+        exit("Need to replace testing data if dimension > 1")
+
     # Step 4: Build model
-    model = STGPNeuralNetworkDummy(
+    model = STGPNeuralNetwork(
         in_feature=in_feature,
         grids=grids,
         fully_connected_layers=fully_connected_layers,
         poly_degree=poly_degree,
         a=a,
         b=b,
-        dimensions=d,
+        dimensions=dimensions,
         nu=nu,
-        a_theta=a_beta,
-        b_theta=b_beta,
+        a_theta=a_theta,
+        b_theta=b_theta,
         a_lambda=a_lambda,
         b_lambda=b_lambda,
         device=device
@@ -57,11 +61,11 @@ def test_stgp(in_feature):
     trainer = V7(
         a=a,
         b=b,
-        a_theta=a_beta,
-        b_theta=b_beta,
-        step_size=0.000001,
-        num_epochs=2,  # fix this back to 300 later
-        burn_in_epochs=0,
+        a_theta=a_theta,
+        b_theta=b_theta,
+        step_size=0.0001,
+        num_epochs=300,  # fix this back to 300 later
+        burn_in_epochs=100,
         batch_size=100,
         device=device,
         model=model
