@@ -11,8 +11,7 @@ def sample_inverse_gamma(shape_param, rate_param, size=1):
     Args:
         shape_param (float or torch.Tensor): Shape parameter α (must be positive).
         rate_param (float or torch.Tensor): Scale parameter β (must be positive).
-        size (int): Number of samples or shape of the out
-        put tensor.
+        size (int): Number of samples or shape of the output tensor.
     Returns:
         torch.Tensor: Samples from the Inverse-Gamma distribution, shape determined by size.
     """
@@ -44,7 +43,6 @@ class SgldBayesianRegression:
         Initializes the SgldBayesianRegression model.
 
         Args:
-            p: Number of features.
             a: Shape parameter for the inverse gamma prior of sigma^2.
             b: Rate parameter for the inverse gamma prior of sigma^2.
             a_theta: Shape parameter for the inverse gamma prior of sigma^2_theta.
@@ -81,15 +79,15 @@ class SgldBayesianRegression:
         dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
         for epoch in range(self.num_epochs):
-            print(f'epoch={epoch}')
-            # if epoch % 100 == 0:
-            #     print(f"Epoch {epoch + 1}/{self.num_epochs}")
+            # print(f'epoch={epoch}')
+            if epoch % 100 == 0:
+                print(f"Epoch {epoch + 1}/{self.num_epochs}")
 
             for batch_idx, (X_batch, y_batch) in enumerate(dataloader):
-                print(f'train:: batch_idx={batch_idx} X_batch.shape={X_batch.shape}, y_batch.shape={y_batch.shape}')
+                # print(f'train:: batch_idx={batch_idx} X_batch.shape={X_batch.shape}, y_batch.shape={y_batch.shape}')
 
                 # total_grad is 1D vector, concatenated by all parameters in the model, which is a common practice
-                total_grad = self._calculate_total_grad(X_batch, y_batch, sigma_squared, sigma_theta_squared, n)
+                total_grad = self._calculate_total_grad(X_batch, y_batch, sigma_squared, sigma_theta_squared, n, self.model.input_layer.beta, self.model.input_layer.sigma_lambda_squared)
 
                 with torch.no_grad():
                     # for name, param in self.model.named_parameters():
@@ -101,6 +99,7 @@ class SgldBayesianRegression:
                     # print(param_list)
                     # exit()
                     for i, param in enumerate(param_list):
+                        # print(f'train:: i={i} param={param}')
                         start_idx = sum(p.numel() for p in param_list[:i])
                         end_idx = start_idx + param.numel()
 
@@ -123,17 +122,10 @@ class SgldBayesianRegression:
                     self.samples['sigma'].append(sigma_squared.item())
                     self.samples['sigma_theta'].append(sigma_theta_squared.item())
                     self.samples['sigma_lambda'].append(sigma_lambda_squared)
-                    self.samples['nu_tilde'].append(self.model.input_layer.nu_tilde)
-                    self.samples['beta'].append(self.model.input_layer.beta)
+                    # self.samples['nu_tilde'].append(self.model.input_layer.nu_tilde)
+                    # self.samples['beta'].append(self.model.input_layer.beta)
 
-                # print('before', self.model.input_layer.beta)
-                self.model.input_layer.sample_Cu()
-                # print('after', self.model.input_layer.beta)
-                self.model.input_layer.set_nu_tilde()
-                # print(f'nu_tilde={self.model.input_layer.nu_tilde}')
-                # exit()
-
-    def _log_prob_of_prior(self, theta, sigma_theta_squared):
+    def _log_prob_of_prior(self, theta, sigma_theta_squared, beta, sigma_lambda_squared):
         """
         Compute the probability of theta under a Gaussian prior N(0, sigma_beta^2 I).
         """
@@ -141,18 +133,30 @@ class SgldBayesianRegression:
         if len(theta.shape) == 1:
             theta = theta.unsqueeze(0)  # torch.Size([2]) --> torch.Size([1, 2])
         # print(f'theta.shap={theta.shape}')
-
+        # print(f'_log_prob_of_prior::type(sigma_lambda_squared)={type(sigma_lambda_squared)} {sigma_lambda_squared.shape} type(sigma_theta_squared)={type(sigma_theta_squared)} {sigma_theta_squared.shape}')
         p = theta.shape[1]
+        sigma_lambda_squared = sigma_lambda_squared.squeeze()
         sigma_theta_squared = sigma_theta_squared.to(self.device).clone().detach()
+        sigma_lambda_squared = sigma_lambda_squared.to(self.device).clone().detach()
         theta_squared_sum = torch.sum(theta ** 2, dim=1)
-        log_norm = -(p / 2) * torch.log(2 * torch.pi * sigma_theta_squared)
-        quadratic_term = -(1 / (2 * sigma_theta_squared)) * theta_squared_sum
-        return log_norm + quadratic_term
+        # print(f'theta {theta.shape}{theta.size()}')
+        beta = beta.clone().detach().flatten().unsqueeze(0)
+        # print(f'after beta {beta.shape}{beta.size()}')
+        lambda_squared_sum = torch.sum(beta ** 2, dim=1)
 
-    def _calculate_total_grad(self, X_batch, y_batch, sigma_squared, sigma_theta_squared, n):
+        log_norm_theta = -(p / 2) * torch.log(2 * torch.pi * sigma_theta_squared)
+        # print(f'_log_prob_of_prior::type(beta.numel())={type(beta.numel())} type(p)={type(p)}')
+        log_norm_lambda = -(beta.numel() / 2) * torch.log(2 * torch.pi * sigma_lambda_squared)
+        # print(f'_log_prob_of_prior::log_norm_lambda={log_norm_lambda} log_norm_theta={log_norm_theta }')
+        quadratic_term_theta = -(1 / (2 * sigma_theta_squared)) * theta_squared_sum
+        quadratic_term_lambda = -(1 / (2 * sigma_lambda_squared)) * lambda_squared_sum
+        # print(f'_log_prob_of_prior::quadratic_term_theta={quadratic_term_theta.shape}{quadratic_term_theta.size()} quadratic_term_lambda={quadratic_term_lambda.shape}{quadratic_term_lambda.size()}')
+        return log_norm_theta + log_norm_lambda + quadratic_term_theta + quadratic_term_lambda
+
+    def _calculate_total_grad(self, X_batch, y_batch, sigma_squared, sigma_theta_squared, n, beta, sigma_lambda_squared):
         likelihood_grad = self._get_gradient_of_log_prob_likelihood(X_batch, y_batch, sigma_squared)
         likelihood_grad_scaled = (n / self.batch_size) * likelihood_grad
-        prior_grad = self._get_gradient_of_log_prob_prior(sigma_theta_squared)
+        prior_grad = self._get_gradient_of_log_prob_prior(sigma_theta_squared, beta, sigma_lambda_squared)
         total_grad = likelihood_grad_scaled + prior_grad
         return total_grad
 
@@ -220,74 +224,47 @@ class SgldBayesianRegression:
     def predict(self, X, method="sample_avg"):
         with torch.no_grad():
             param_list = [p for p in self.model.parameters()]
-
+            # For each sample, make new prediction and then average predictions.(Monte Carlo)
             if method == "sample_avg":
                 all_predictions = []
-                # zip params and betas so they stay aligned
-                for sample_params, beta_sample in zip(self.samples['params'], self.samples['beta']):
-                    # set all non-beta params
+                for sample_params in self.samples['params']:
                     start_idx = 0
-                    for param in param_list:
+                    for i, param in enumerate(param_list):
                         end_idx = start_idx + param.numel()
-                        param_slice = torch.tensor(
-                            sample_params[start_idx:end_idx],
-                            device=X.device
-                        ).reshape(param.shape)
+                        param_slice = torch.tensor(sample_params[start_idx:end_idx], device=X.device).reshape(param.shape)
                         param.set_(param_slice)
                         start_idx = end_idx
-
-                    # in-place copy into the tensor beta
-                    self.model.input_layer.beta.copy_(beta_sample.to(X.device))
 
                     prediction = self.model(X)
                     all_predictions.append(prediction.cpu().numpy())
 
                 mean_prediction = np.mean(all_predictions, axis=0)
-                variance_prediction = np.std(all_predictions,  axis=0)
+                variance_prediction = np.std(all_predictions, axis=0)
                 print(f'predict (sample_avg)::variance_prediction={variance_prediction}')
                 return torch.tensor(mean_prediction, device=X.device)
-
+            # get the all parameters for all samples, take average and then make prediction
             elif method == "param_avg":
-                # accumulators for the other params
-                param_accumulator = [
-                    torch.zeros_like(p, device=X.device) for p in param_list
-                ]
-                # accumulator for beta
-                beta_acc = torch.zeros_like(
-                    self.model.input_layer.beta, device=X.device
-                )
+                # Initialize accumulators
+                param_accumulator = [torch.zeros_like(p, device=X.device) for p in param_list]
 
-                num_samples = len(self.samples['params'])
-                for sample_params, beta_sample in zip(self.samples['params'], self.samples['beta']):
-                    # accumulate other params
+                # Sum all sampled parameters
+                for sample_params in self.samples['params']:
                     start_idx = 0
                     for i, param in enumerate(param_list):
                         end_idx = start_idx + param.numel()
-                        param_slice = torch.tensor(
-                            sample_params[start_idx:end_idx], device=X.device
-                        ).reshape(param.shape)
+                        param_slice = torch.tensor(sample_params[start_idx:end_idx], device=X.device).reshape(param.shape)
                         param_accumulator[i] += param_slice
                         start_idx = end_idx
 
-                    # accumulate beta
-                    beta_acc += beta_sample.to(X.device)
-
-                # average & set other params
+                # Average the parameters
+                num_samples = len(self.samples['params'])
                 for i, param in enumerate(param_list):
-                    avg = param_accumulator[i] / num_samples
-                    param.set_(avg)
+                    param.set_(param_accumulator[i] / num_samples)
 
-                # average & copy into beta tensor
-                beta_mean = beta_acc.div(num_samples)
-                self.model.input_layer.beta.copy_(beta_mean)
-
+                # Predict using the mean parameters
                 prediction = self.model(X)
                 print('predict (param_avg)::done')
                 return prediction
-
-            else:
-                raise ValueError(f"Unknown method {method}")
-
 
     def _get_gradient_of_log_prob_likelihood(self, X, y, sigma_squared):
         """
@@ -304,12 +281,11 @@ class SgldBayesianRegression:
         # Zero the gradients before the backward pass
         self.model.zero_grad()
 
-        for param in self.model.parameters():
-            param.requires_grad_(True)
-
+        # for param in self.model.parameters():
+        #   param.requires_grad_(True)
         log_likelihood = self._log_prob_of_likelihood(y, X, sigma_squared)
         log_likelihood.backward()
-        total_grad = torch.cat([p.grad.flatten() for p in self.model.parameters()])
+        total_grad = torch.cat([p.grad.flatten() for p in self.model.parameters() if p.requires_grad])
 
         # Note: Zeroing gradients after extracting total_grad might be redundant
         # if this function is called once per optimization step. However, it's
@@ -318,7 +294,7 @@ class SgldBayesianRegression:
 
         return total_grad
 
-    def _get_gradient_of_log_prob_prior(self, sigma_theta_squared):
+    def _get_gradient_of_log_prob_prior(self, sigma_theta_squared, beta, sigma_lambda_squared):
         """
         Compute the gradient of the log-prior with respect to model parameters.
 
@@ -332,7 +308,8 @@ class SgldBayesianRegression:
         params = params.clone().detach().requires_grad_(True).to(self.device)
 
         # print(f'get_model_prior_gradient: params={params} sigma_beta={sigma_beta}')
-        log_prior = self._log_prob_of_prior(params, sigma_theta_squared)
+        log_prior = self._log_prob_of_prior(params, sigma_theta_squared, beta, sigma_lambda_squared)
+        # print(f'get_model_prior_gradient:log_prior{log_prior}')
         log_prior.backward()
 
         total_grad = params.grad.clone()
