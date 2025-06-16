@@ -8,7 +8,7 @@ from v6.beta_prior import gp_eigen_value, gp_eigen_funcs_fast
 
 class SpatialSTGPInputLayer(nn.Module):
     def __init__(self, in_feature, num_of_units_in_top_layer_of_fully_connected_layers, grids, poly_degree=10, a=0.01, b=1.0, dimensions=2,
-                 nu=0.1,a_theta=2.0,b_theta=1.0, a_lambda=2.0, b_lambda=1.0, device='cpu'):
+                 nu=0.1, a_theta=2.0, b_theta=1.0, a_lambda=2.0, b_lambda=1.0, device='cpu'):
         """
         :param num_of_units_in_top_layer_of_fully_connected_layers: number of neurons in this layer of the neural network
         :param grids: tensor that serves as a skeleton for the image, tensor of coordinates
@@ -24,12 +24,10 @@ class SpatialSTGPInputLayer(nn.Module):
         self.in_feature = in_feature
         self.device = device
         self.num_of_units_in_top_layer_of_fully_connected_layers = num_of_units_in_top_layer_of_fully_connected_layers
-        print(f'__init__:: self.num_of_units_in_top_layer_of_fully_connected_layers={self.num_of_units_in_top_layer_of_fully_connected_layers}')
         self.nu = nu
         self.a_lambda = a_lambda
         self.b_lambda = b_lambda
         self.sigma_lambda_squared = sample_inverse_gamma(self.a_lambda, self.b_lambda, size=1)
-        print(f'__init__:: sigma_lambda_squared={self.sigma_lambda_squared}')
 
         # Initialize grids and other parameters
         self.grids = torch.tensor(grids.copy(), dtype=torch.float32).to(device)
@@ -52,20 +50,13 @@ class SpatialSTGPInputLayer(nn.Module):
 
         self.eigenfuncs = self.eigenfuncs.T  # now (V, K)
 
-        self.Cu = None  # Cu in equation 34
-        self.sample_Cu()
-
-        # initialize self.theta
-        self.beta = None
-        self.beta = torch.matmul(self.Cu, self.eigenfuncs.T)
-
-
+        self.Cu = self.sample_Cu()  # Cu in equation 34
+        beta = torch.matmul(self.Cu, self.eigenfuncs.T).detach()
+        self.beta = nn.Parameter(beta)
         # ksi is the bias term for the input layer in equation 31. ksi is the pronunciation of the greek letter
         # self.ksi is a vector, the size is num_of_units_in_top_layer_of_fully_connected_layers
         self.ksi = nn.Parameter(torch.zeros(num_of_units_in_top_layer_of_fully_connected_layers, device=device))
         self.initializeKsi(a_theta, b_theta)
-        # self.ksi = torch.zeros(num_of_units_in_top_layer_of_fully_connected_layers, device=device) # comment out later
-        #self.ksi = torch.zeros(num_of_units_in_top_layer_of_fully_connected_layers, device=device)  # delete later
         # note: nu is the thing that looks like v but isn't. nu is inversely related to variance(sigma_lambda squared
         # the larger the variance, the lower the threshold. when variance is small, higher threshold, greater sparsity
         # used to normalize thresholding relative to variance. + 1e-8 prevents division by 0 error.
@@ -99,29 +90,19 @@ class SpatialSTGPInputLayer(nn.Module):
             new_a_lambda = self.a_lambda + total_entries / 2
             new_b_lambda = self.b_lambda + squared_norm / 2
             self.sigma_lambda_squared = sample_inverse_gamma(new_a_lambda, new_b_lambda, size=1)
-            # print(f'_sample_sigma_lambda_squared:: sigma_lambda_squared={self.sigma_lambda_squared}')
             return self.sigma_lambda_squared
 
     def set_nu_tilde(self):
         self.nu_tilde = torch.abs(self.nu / (torch.sqrt(self.sigma_lambda_squared) + 1e-8))
-        """
-        sigma_lambda_scalar = torch.sqrt(self.sigma_lambda_squared).item()
-        # Safe bounding of nu_tilde to avoid trivial solutions
-        self.nu_tilde = torch.tensor(
-            min(1.0, max(1e-3, self.nu / (sigma_lambda_scalar + 1e-8))),
-            device=self.device
-        )
-        """
 
     def sample_Cu(self):
         """
         Resample Cu ∼ N(0, σ²_lambda ⋅ Λ) after sigma_lambda_squared is updated.
         """
         std_dev = torch.sqrt(self.sigma_lambda_squared * self.eigenvalues)  # std_dev.shape = (self.K, )
-        # print(f'sample_Cu:: self.sigma_lambda_squared={self.sigma_lambda_squared} std_dev={std_dev}')
-        self.Cu = torch.randn(self.num_of_units_in_top_layer_of_fully_connected_layers, self.K, device=self.device) * std_dev  # Cu in equation 34
-        # print(f'sample_Cu:: self.Cu={self.Cu}')
-        self.beta = torch.matmul(self.Cu, self.eigenfuncs.T)
+        Cu = torch.randn(self.num_of_units_in_top_layer_of_fully_connected_layers, self.K, device=self.device) * std_dev  # Cu in equation 34
+        self.beta = torch.matmul(Cu, self.eigenfuncs.T)
+        return Cu
 
     def soft_threshold(self, x):
 
@@ -135,27 +116,9 @@ class SpatialSTGPInputLayer(nn.Module):
         :param X: represents the image, intensity of each voxel
         :return: the input for the fully connected hidden layers
         """
-        print(f'SpatialSTGPInputLayer::forward: X.shape={X.shape} X[0]={X[0]} self.beta[0]={self.beta[0]}')
         # function 34
+        beta = self.soft_threshold(self.beta)
+        z = torch.matmul(X, beta.T) + self.ksi  # (B, num_of_units_in_top_layer_of_fully_connected_layers)
 
-        # self.beta = torch.matmul(self.Cu, self.eigenfuncs.T)  # uncomment out later (num_of_units_in_top_layer_of_fully_connected_layers, number of voxels in an image)
-
-        # print(f'forward::theta before threshold{self.theta}')
-        # print(f'forward:: nu={self.nu} nu_tilde={self.nu_tilde} sigma_lambda_squared={self.sigma_lambda_squared} torch.sqrt(self.sigma_lambda_squared)={torch.sqrt(self.sigma_lambda_squared)}')
-
-        # self.beta = self.soft_threshold(self.beta) # uncomment out later
-        # print(f'forward:: X[0]={X[0]} {self.beta[0]} {torch.matmul(X[0], self.beta[2])}')
-        # function 31
-        # print(f'self.beta.shape{self.beta.shape}')
-        # print(f'self.beta={self.beta}')
-        z = torch.matmul(X, self.beta.T) + self.ksi  # (B, num_of_units_in_top_layer_of_fully_connected_layers)
-        # print(f'forward::x.shape{X.shape}')
-        # print(f'forward::self.theta after threshold{self.theta}')
-        # print(f'forward:: z.shape={z.shape}')
-        # print(f'z{z}')
-        # exit()
-        #print(f'forward:: z{z}')
-        # activated = F.relu(z)
-        return z
-
-
+        activated = F.relu(z)
+        return activated
