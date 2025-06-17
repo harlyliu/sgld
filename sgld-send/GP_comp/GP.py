@@ -6,7 +6,7 @@ import GPlib
 # https://github.com/kangjian2016/BayesGPfit/blob/master/R/fastGPfit.R
 
 
-def generate_grids(d=1, num_grids=50, grids_lim=(-1, 1), random=False):
+def generate_grids(dimensions=1, num_grids=50, grids_lim=(-1, 1), random=False):
     # Define the base grids based on random or sequential generation
     if random:
         base_grids = np.random.rand(num_grids) * (grids_lim[1] - grids_lim[0]) + grids_lim[0]
@@ -14,7 +14,7 @@ def generate_grids(d=1, num_grids=50, grids_lim=(-1, 1), random=False):
         base_grids = np.linspace(grids_lim[0], grids_lim[1], num_grids)
 
     # Create list of grids for each dimension
-    grids_list = [base_grids] * d
+    grids_list = [base_grids] * dimensions
 
     # Generate all combinations using product and convert to tensor
     grids = np.array(list(product(*grids_list)), dtype=np.float64)
@@ -25,26 +25,26 @@ def generate_grids(d=1, num_grids=50, grids_lim=(-1, 1), random=False):
     return grids
 
 
-def gp_eigen_value(poly_degree=10, a=1, b=1, d=2):
+def gp_eigen_value(poly_degree=10, a=1, b=1, dimensions=2):
     # Calculate constants
     cn = np.sqrt(a ** 2 + 2 * a * b)
     A = a + b + cn
     B = b / A
 
     # Create index array (equivalent to R's c() and choose())
-    idx = np.array([0] + [comb(i + d, d, exact=True) for i in range(poly_degree + 1)])
+    idx = np.array([0] + [comb(i + dimensions, dimensions, exact=True) for i in range(poly_degree + 1)])
 
     # Generate idxlist using list comprehension (equivalent to R's sapply)
     idxlist = [list(range(idx[i] + 1, idx[i + 1] + 1)) for i in range(poly_degree + 1)]
 
     # Get length k from external function (assumed to be defined elsewhere)
-    k = gp_num_eigen_funs(poly_degree=poly_degree, d=d)
+    k = gp_num_eigen_funs(poly_degree=poly_degree, dimensions=dimensions)
 
     # Initialize value array with NaN
     value = np.full(k, np.nan)
 
     # Calculate dvalue
-    dvalue = (np.sqrt(np.pi / A)) ** d * B ** np.arange(1, poly_degree + 2)
+    dvalue = (np.sqrt(np.pi / A)) ** dimensions * B ** np.arange(1, poly_degree + 2)
 
     # Fill value array using idxlist
     for i in range(poly_degree + 1):
@@ -55,8 +55,8 @@ def gp_eigen_value(poly_degree=10, a=1, b=1, d=2):
     return value
 
 
-def gp_num_eigen_funs(poly_degree=10, d=2):
-    return int(comb(poly_degree + d, d))
+def gp_num_eigen_funs(poly_degree=10, dimensions=2):
+    return int(comb(poly_degree + dimensions, dimensions))
 
 
 def gp_eigen_funcs_fast(grids, poly_degree=10, a=0.01, b=1.0, orth=False):
@@ -75,6 +75,6 @@ def gp_eigen_funcs_fast(grids, poly_degree=10, a=0.01, b=1.0, orth=False):
 
 if __name__ == '__main__':
     # ans = generate_grids(d=2, num_grids=5, grids_lim=(-1, 1), random=False)
-    ans = gp_num_eigen_funs(poly_degree=10, d=2)
+    ans = gp_num_eigen_funs(poly_degree=10, dimensions=2)
     # ans = gp_eigen_value()
     print(type(ans), len(ans))
