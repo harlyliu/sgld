@@ -8,7 +8,7 @@ from v6.beta_prior import gp_eigen_value, gp_eigen_funcs_fast
 
 class SpatialSTGPInputLayer(nn.Module):
     def __init__(self, in_feature, num_of_units_in_top_layer_of_fully_connected_layers, grids, poly_degree=10, a=0.01, b=1.0, dimensions=2,
-                 nu=0.1, a_theta=2.0, b_theta=1.0, a_lambda=2.0, b_lambda=1.0, device='cpu'):
+                 nu=0.1, nu_tilde=5, a_theta=2.0, b_theta=1.0, a_lambda=2.0, b_lambda=1.0, device='cpu'):
         """
         :param num_of_units_in_top_layer_of_fully_connected_layers: number of neurons in this layer of the neural network
         :param grids: tensor that serves as a skeleton for the image, tensor of coordinates
@@ -24,7 +24,7 @@ class SpatialSTGPInputLayer(nn.Module):
         self.in_feature = in_feature
         self.device = device
         self.num_of_units_in_top_layer_of_fully_connected_layers = num_of_units_in_top_layer_of_fully_connected_layers
-        self.nu = nu
+
         self.a_lambda = a_lambda
         self.b_lambda = b_lambda
         self.sigma_lambda_squared = sample_inverse_gamma(self.a_lambda, self.b_lambda, size=1)
@@ -34,7 +34,18 @@ class SpatialSTGPInputLayer(nn.Module):
         self.poly_degree = poly_degree
         self.a = a
         self.b = b
+
         self.dimensions = dimensions
+
+        # note: nu is the thing that looks like v but isn't. nu is inversely related to variance(sigma_lambda squared
+        # the larger the variance, the lower the threshold. when variance is small, higher threshold, greater sparsity
+        # used to normalize thresholding relative to variance. + 1e-8 prevents division by 0 error.
+        # This prevents division by zero or numerical instability if sigma_lambda_squared is very small.
+        # function in the line above equation 33. nu~ =v/sigma_lambda
+        if dimensions == 1:
+            self.nu_tilde = torch.abs(nu / (torch.sqrt(self.sigma_lambda_squared) + 1e-8))
+        elif dimensions == 2:
+            self.nu_tilde = nu_tilde
 
         eigenvalues_np = gp_eigen_value(poly_degree, a, b, dimensions)
         self.K = len(eigenvalues_np)
@@ -48,7 +59,7 @@ class SpatialSTGPInputLayer(nn.Module):
         eigenfuncs_np = gp_eigen_funcs_fast(grids_np, poly_degree, a, b, orth=True)
         self.eigenfuncs = torch.tensor(eigenfuncs_np, dtype=torch.float32, device=device)  # shape (K, V)
 
-        self.eigenfuncs = self.eigenfuncs.T  # now (V, K)
+        # self.eigenfuncs = self.eigenfuncs.T  # now (V, K)
 
         self.Cu = self.sample_Cu()  # Cu in equation 34
         beta = torch.matmul(self.Cu, self.eigenfuncs.T).detach()
@@ -57,13 +68,6 @@ class SpatialSTGPInputLayer(nn.Module):
         # self.ksi is a vector, the size is num_of_units_in_top_layer_of_fully_connected_layers
         self.ksi = nn.Parameter(torch.zeros(num_of_units_in_top_layer_of_fully_connected_layers, device=device))
         self.initializeKsi(a_theta, b_theta)
-        # note: nu is the thing that looks like v but isn't. nu is inversely related to variance(sigma_lambda squared
-        # the larger the variance, the lower the threshold. when variance is small, higher threshold, greater sparsity
-        # used to normalize thresholding relative to variance. + 1e-8 prevents division by 0 error.
-        # This prevents division by zero or numerical instability if sigma_lambda_squared is very small.
-        # function in the line above equation 33. nu~ =v/sigma_lambda
-        self.nu_tilde = None
-        self.set_nu_tilde()
 
     def initializeKsi(self, a_theta=2.0, b_theta=1.0):
         """
@@ -92,9 +96,6 @@ class SpatialSTGPInputLayer(nn.Module):
             self.sigma_lambda_squared = sample_inverse_gamma(new_a_lambda, new_b_lambda, size=1)
             return self.sigma_lambda_squared
 
-    def set_nu_tilde(self):
-        self.nu_tilde = torch.abs(self.nu / (torch.sqrt(self.sigma_lambda_squared) + 1e-8))
-
     def sample_Cu(self):
         """
         Resample Cu ∼ N(0, σ²_lambda ⋅ Λ) after sigma_lambda_squared is updated.
@@ -105,9 +106,10 @@ class SpatialSTGPInputLayer(nn.Module):
         return Cu
 
     def soft_threshold(self, x):
-
         magnitude = torch.abs(x) - self.nu_tilde
-        thresholded = F.relu(magnitude)
+        # 4) zero out negatives
+        thresholded = torch.relu(magnitude)
+        # 5) restore sign
         return thresholded * torch.sign(x)
 
     def forward(self, X):
@@ -117,8 +119,10 @@ class SpatialSTGPInputLayer(nn.Module):
         :return: the input for the fully connected hidden layers
         """
         # function 34
-        beta = self.soft_threshold(self.beta)
-        z = torch.matmul(X, beta.T) + self.ksi  # (B, num_of_units_in_top_layer_of_fully_connected_layers)
-
+        # with torch.no_grad():
+        #    self.beta.data.copy_( self.soft_threshold(self.beta) )
+        beta = self.soft_threshold(self.beta) # If you want linear to work for sure, use this line
+        # z = torch.matmul(X, self.beta.T) + self.ksi  # (B, num_of_units_in_top_layer_of_fully_connected_layers)
+        z = torch.matmul(X, beta.T) + self.ksi # If you want linear to work for sure, use this line
         activated = F.relu(z)
         return activated
