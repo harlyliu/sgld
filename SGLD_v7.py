@@ -2,6 +2,7 @@ import torch
 from torch.distributions import Gamma
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 def sample_inverse_gamma(shape_param, rate_param, size=1):
@@ -18,7 +19,47 @@ def sample_inverse_gamma(shape_param, rate_param, size=1):
     gamma_dist = Gamma(shape_param, rate_param)
     gamma_samples = gamma_dist.sample(torch.Size((size,)))
     inverse_gamma_samples = 1.0 / gamma_samples
+
     return inverse_gamma_samples
+
+
+def select_significant_voxels(beta_samples, gamma):
+    """
+    Implements Section 3.3 Bayesian FDR selection.
+
+    Args:
+      beta_samples: list of T NumPy arrays, each shape (U1, V)
+      gamma:        float, desired false discovery rate threshold
+
+    Returns:
+      mask:  np.ndarray of bool, shape (V,), True = selected voxel
+      p_hat: np.ndarray of float, shape (V,), inclusion probabilities
+      delta: float, cutoff probability
+      r:     int, number of voxels selected
+    """
+    # 1) Stack into array of shape (T, U1, V)
+    beta_arr = np.stack(beta_samples, axis=0)
+    # 2) For each draw t and voxel j, flag if any unit weight ≠ 0 → shape (T, V)
+    any_nz = np.any(beta_arr != 0, axis=1)
+    # 3) Average over T draws to get p_hat[j] ∈ [0,1] → shape (V,)
+    p_hat = any_nz.astype(float).mean(axis=0)
+    # 4) Sort p_hat descending
+    order = np.argsort(-p_hat)       # indices that sort high→low
+    p_sorted = p_hat[order]             # sorted probabilities
+    # 5) Compute running FDR for top k voxels
+    fdr = np.cumsum(1 - p_sorted) / np.arange(1, len(p_sorted) + 1)
+    # print("fdr:", fdr)
+    # 6) Find largest k with FDR(k) ≤ γ
+    valid = np.where(fdr <= gamma)[0]
+    if valid.size > 0:
+        r = int(valid[-1] + 1)
+        delta = float(p_sorted[r - 1])
+    else:
+        r, delta = 0, 1.0
+
+    # 7) Build final mask
+    mask = p_hat >= delta
+    return mask, p_hat, delta, r
 
 
 class SgldBayesianRegression:
@@ -72,7 +113,7 @@ class SgldBayesianRegression:
         y = y_train.to(self.device)
         n = X.shape[0]
         sigma_squared = self._sample_sigma_squared(X, y)
-        print(f'initial sigma^2={sigma_squared}')
+        # print(f'initial sigma^2={sigma_squared}')
         sigma_theta_squared = self._sample_sigma_theta_squared()
 
         dataset = TensorDataset(X, y)
@@ -86,6 +127,12 @@ class SgldBayesianRegression:
             for batch_idx, (X_batch, y_batch) in enumerate(dataloader):
                 # print(f'train:: batch_idx={batch_idx} X_batch.shape={X_batch.shape}, y_batch.shape={y_batch.shape}')
 
+                print(self.model.input_layer.beta)
+                beta = self.model.input_layer.beta
+                beta_thresh = self.model.input_layer.soft_threshold(beta)
+                beta.data.copy_(beta_thresh)
+                print(self.model.input_layer.beta)
+                exit()
                 # total_grad is 1D vector, concatenated by all parameters in the model, which is a common practice
                 total_grad = self._calculate_total_grad(X_batch, y_batch, sigma_squared, sigma_theta_squared, n, self.model.input_layer.beta, self.model.input_layer.sigma_lambda_squared)
 
@@ -96,13 +143,10 @@ class SgldBayesianRegression:
                     #     print(f"Values:\n{param.data}")
                     #     print("-" * 30)
                     param_list = [p for p in self.model.parameters()]
-                    # print(param_list)
-                    # exit()
                     for i, param in enumerate(param_list):
                         # print(f'train:: i={i} param={param}')
                         start_idx = sum(p.numel() for p in param_list[:i])
                         end_idx = start_idx + param.numel()
-
                         # Extract the corresponding gradient slice and reshape it to match param's shape
                         grad_slice = total_grad[start_idx:end_idx].reshape(param.shape)
 
@@ -111,6 +155,7 @@ class SgldBayesianRegression:
 
                         # Update param in-place
                         param.add_(self.step_size * grad_slice + param_noise)
+
                 # Sample variances per batch
                 sigma_squared = self._sample_sigma_squared(X_batch, y_batch)
                 sigma_theta_squared = self._sample_sigma_theta_squared()
@@ -220,51 +265,129 @@ class SgldBayesianRegression:
             # print(f"Sampled σβ^2: {sigma_theta_squared.item()}")
 
             return sigma_theta_squared
+    """
+    def select_significant_voxels(self, gamma):
 
-    def predict(self, X, method="sample_avg"):
+        # list that will hold all beta samples
+        beta_samples = []
+        dev = self.model.input_layer.beta.device
+
+        param_shape = self.model.input_layer.beta.shape
+        U1, V = param_shape
+        # U1= amount of units
+        # V = amount of voxels
+        for flat_params in self.samples['params']:
+            # find and reconstruct only the beta parameter
+            idx = 0
+            for p in self.model.parameters():
+                numel = p.numel()
+                if p is self.model.input_layer.beta:
+                    chunk = flat_params[idx:idx+numel]
+                    beta = torch.from_numpy(chunk.reshape(param_shape)).to(dev)
+                    break
+                idx += numel
+
+            # apply the same soft‐threshold you use in train
+            b = self.model.input_layer.soft_threshold(beta)
+            beta_samples.append(b.detach().cpu().numpy())  # (U1, V)
+        # build array (length of beta samples, U1, V) and compute inclusion flags
+        print(len(beta_samples))
+
+        # assume beta_samples is your list of length T=2000,
+        # each element a NumPy array of shape (U1=5, V=25)
+        beta_arr = np.stack(beta_samples, axis=0)       # shape: (2000, 5, 25)
+
+        # for each sample t and voxel j, check if any of the 5 units is nonzero:
+        #   any_nz[t, j] == True  if ∃u such that beta_arr[t, u, j] != 0
+        any_nz = np.any(beta_arr != 0, axis=1)          # shape: (2000, 25), dtype=bool
+
+        # convert to 0/1 and average over the 2000 samples:
+        #   p_hat[j] = (1/2000) * sum_t any_nz[t, j]
+        p_hat = any_nz.astype(float).mean(axis=0)       # shape: (25,), dtype=float          # (V,) float
+        # print(p_hat)
+        # FDR thresholding
+        order = np.argsort(-p_hat) # (V,) int, sort all values of -phat
+        p_sorted = p_hat[order]
+        print(p_sorted)
+        # compute running fdr for top k voxels
+        fdr = np.cumsum(1 - p_sorted) / np.arange(1, V+1)     # (V,) float
+        # at each prefix length k, frd[k-1] tells expected proportion of false positives for that many voxels
+        print(fdr)
+        valid = np.where(fdr <= gamma)[0] # all positions that are under gamma
+        print(valid)
+        if valid.size:
+            r = int(valid[-1] + 1) # number of voxels to select, k= index + 1
+            delta = float(p_sorted[r - 1]) # probability threshold
+        else:
+            r, delta = 0, 1.0
+        print(r)
+        print(delta)
+
+        mask = p_hat >= delta  # (V,) bool
+        print(p_hat)
+        return mask, p_hat, delta, r
+    """
+    def predict(self, X, gamma=None):
+        if gamma is not None:
+            beta_samples = []
+            dev = self.model.input_layer.beta.device
+
+            param_shape = self.model.input_layer.beta.shape
+            for flat_params in self.samples['params']:
+                # find and reconstruct only the beta parameter
+                idx = 0
+                for p in self.model.parameters():
+                    numel = p.numel()
+                    if p is self.model.input_layer.beta:
+                        chunk = flat_params[idx:idx+numel]
+                        beta = torch.from_numpy(chunk.reshape(param_shape)).to(dev)
+                        # apply the same soft‐threshold you use in train
+                        b = self.model.input_layer.soft_threshold(beta)
+                        beta_samples.append(b.detach().cpu().numpy())  # (U1, V)
+                        break
+                    idx += numel
+
+            mask, p_hat, delta, r = select_significant_voxels(beta_samples, gamma)
+            print(f"Threshold δ={delta:.3f}, selecting r={r} voxels at FDR={gamma}")
+
+            # 2) zero out all beta weights for voxels where mask[j] is False
+            bool_mask = torch.tensor(mask, device=self.model.input_layer.beta.device)
+            # assume beta shape is (U1, V), so we mask along the V dimension
+            self.model.input_layer.beta.data[:, ~bool_mask] = 0
+            p_masked = p_hat * mask.astype(float)
+            #   now p_masked[j] == p_hat[j] if mask[j]==True, else 0.0
+
+            # 2) reshape into your image grid
+            dim = int(np.sqrt(p_masked.size))
+            prob_img_masked = p_masked.reshape(dim, dim)
+
+            # 3) display
+            plt.figure()
+            plt.imshow(prob_img_masked, interpolation='nearest')
+            plt.colorbar(label="Inclusion probability (masked)")
+            plt.title(f"Thresholded p̂ (δ={delta:.3f}, r={r})")
+            plt.tight_layout()
+            plt.show()
+
         with torch.no_grad():
             param_list = [p for p in self.model.parameters()]
             # For each sample, make new prediction and then average predictions.(Monte Carlo)
-            if method == "sample_avg":
-                all_predictions = []
-                for sample_params in self.samples['params']:
-                    start_idx = 0
-                    for i, param in enumerate(param_list):
-                        end_idx = start_idx + param.numel()
-                        param_slice = torch.tensor(sample_params[start_idx:end_idx], device=X.device).reshape(param.shape)
-                        param.set_(param_slice)
-                        start_idx = end_idx
-
-                    prediction = self.model(X)
-                    all_predictions.append(prediction.cpu().numpy())
-
-                mean_prediction = np.mean(all_predictions, axis=0)
-                variance_prediction = np.std(all_predictions, axis=0)
-                print(f'predict (sample_avg)::variance_prediction={variance_prediction}')
-                return torch.tensor(mean_prediction, device=X.device)
-            # get the all parameters for all samples, take average and then make prediction
-            elif method == "param_avg":
-                # Initialize accumulators
-                param_accumulator = [torch.zeros_like(p, device=X.device) for p in param_list]
-
-                # Sum all sampled parameters
-                for sample_params in self.samples['params']:
-                    start_idx = 0
-                    for i, param in enumerate(param_list):
-                        end_idx = start_idx + param.numel()
-                        param_slice = torch.tensor(sample_params[start_idx:end_idx], device=X.device).reshape(param.shape)
-                        param_accumulator[i] += param_slice
-                        start_idx = end_idx
-
-                # Average the parameters
-                num_samples = len(self.samples['params'])
+            all_predictions = []
+            for sample_params in self.samples['params']:
+                start_idx = 0
                 for i, param in enumerate(param_list):
-                    param.set_(param_accumulator[i] / num_samples)
+                    end_idx = start_idx + param.numel()
+                    param_slice = torch.tensor(sample_params[start_idx:end_idx], device=X.device).reshape(param.shape)
+                    param.set_(param_slice)
+                    start_idx = end_idx
 
-                # Predict using the mean parameters
                 prediction = self.model(X)
-                print('predict (param_avg)::done')
-                return prediction
+                all_predictions.append(prediction.cpu().numpy())
+
+            mean_prediction = np.mean(all_predictions, axis=0)
+            variance_prediction = np.std(all_predictions, axis=0)
+            print(f'predict (sample_avg)::variance_prediction={variance_prediction}')
+            return torch.tensor(mean_prediction, device=X.device)
 
     def _get_gradient_of_log_prob_likelihood(self, X, y, sigma_squared):
         """
