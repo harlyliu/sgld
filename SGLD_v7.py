@@ -127,15 +127,15 @@ class SgldBayesianRegression:
             for batch_idx, (X_batch, y_batch) in enumerate(dataloader):
                 # print(f'train:: batch_idx={batch_idx} X_batch.shape={X_batch.shape}, y_batch.shape={y_batch.shape}')
 
-                print(self.model.input_layer.beta)
+                # print(self.model.input_layer.beta)
+
+                # print(self.model.input_layer.beta)
+                # exit()
+                # total_grad is 1D vector, concatenated by all parameters in the model, which is a common practice
+                total_grad = self._calculate_total_grad(X_batch, y_batch, sigma_squared, sigma_theta_squared, n, self.model.input_layer.beta, self.model.input_layer.sigma_lambda_squared)
                 beta = self.model.input_layer.beta
                 beta_thresh = self.model.input_layer.soft_threshold(beta)
                 beta.data.copy_(beta_thresh)
-                print(self.model.input_layer.beta)
-                exit()
-                # total_grad is 1D vector, concatenated by all parameters in the model, which is a common practice
-                total_grad = self._calculate_total_grad(X_batch, y_batch, sigma_squared, sigma_theta_squared, n, self.model.input_layer.beta, self.model.input_layer.sigma_lambda_squared)
-
                 with torch.no_grad():
                     # for name, param in self.model.named_parameters():
                     #     print(f"Layer: {name}")

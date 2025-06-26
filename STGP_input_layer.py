@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-from SGLD_v6 import sample_inverse_gamma
+from SGLD_v7 import sample_inverse_gamma
 from v6.beta_prior import gp_eigen_value, gp_eigen_funcs_fast
 
 

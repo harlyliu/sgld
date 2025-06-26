@@ -59,38 +59,38 @@ def simulate_data(n, r2, dim, random_seed=2023):
     # defines the exact weight of each pixel. gives the importance of each pixel. true_beta.shape = [dim^2]
     # the fancy stuff is just a defined math equation given the grid points.
     true_beta2 = np.exp(-5 * (v_list2[:, 0] - 1.5 * np.sin(math.pi * np.abs(v_list2[:, 1])) + 1.0) ** 2)
-    print(f'true_beta2.shape={true_beta2.shape}')
+    # print(f'true_beta2.shape={true_beta2.shape}')
     # threshold value. any point with low enough weight is set to 0
     true_beta2[true_beta2 < 0.5] = 0
     # p1 = v_list1.shape[0]
 
     # total number of grid points. dim^2
     p2 = v_list2.shape[0]
-    print(f'p2={p2}')
+    # print(f'p2={p2}')
 
     # Bases1 = compute_bases(v_list1)
     # Bases2.shape = [dim^2, poly_degree].
     # each row is a grid point. each column is the value of basis function at one point
     Bases2 = compute_bases(v_list2)
-    print(f'Bases2.shape={Bases2.shape}')
+    # print(f'Bases2.shape={Bases2.shape}')
 
     # theta1 = np.random.normal(size = n * Bases1.shape[0], scale = 1 / np.sqrt(p1))
     # theta1 = theta1.reshape(Bases1.shape[0], n)
     # sample random coefficients theta. basis weights calculated from bases2
     # size = [n * amount of gridpoints]
-    theta2 = np.random.normal(size=n * Bases2.shape[1], scale=1 / np.sqrt(p2))
-    print(f'theta2={theta2} theta2.shape={theta2.shape}')
+    theta2 = np.random.normal(size=n * Bases2.shape[0], scale=1 / np.sqrt(p2))
+    # print(f'theta2={theta2} theta2.shape={theta2.shape}')
 
     # reshapes theta to [polydegree, num samples]
-    theta2 = theta2.reshape(Bases2.shape[1], n)
-    print(f'theta2.shape={theta2.shape}')
+    theta2 = theta2.reshape(Bases2.shape[0], n)
+    # print(f'theta2.shape={theta2.shape}')
     # simulate an image
     # img1 = np.transpose(np.dot(np.transpose(Bases1), theta1))
     # constructs image. img2.shape = [n, poly_degree]. each row is one image, a flattened vector
     # transpose flips axis.
-    img2 = np.transpose(np.dot(Bases2, theta2))
+    img2 = np.transpose(np.dot(np.transpose(Bases2), theta2))
     # img2=np.dot(np.transpose(theta2), np.transpose(Bases2))
-    print(f'img2.shape={img2.shape}')
+    # print(f'img2.shape={img2.shape}')
 
     # dot: matrix multiplication. dot product. 1D vector dot 1D vector returns scalar
     # [m, k] dot [k] returns array shape [m]

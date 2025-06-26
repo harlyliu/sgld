@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from STGP_input_layer import SpatialSTGPInputLayer
-from SGLD_v6 import sample_inverse_gamma
+from SGLD_v7 import sample_inverse_gamma
 import math
 
 
