@@ -70,7 +70,8 @@ def gp_eigen_funcs_fast(grids, poly_degree=10, a=0.01, b=1.0, orth=False):
                                         float(b))
     else:
         res = GPlib.GP_eigen_funcs(eigen_funcs, grids, int(grids_size), int(d), int(poly_degree), float(a), float(b))
-    return res.reshape((num_funcs, grids_size), order="F")
+    # return res.reshape((num_funcs, grids_size), order="F")
+    return res.reshape((grids_size, num_funcs), order="F")
 
 
 if __name__ == '__main__':
