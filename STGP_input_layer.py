@@ -121,8 +121,8 @@ class SpatialSTGPInputLayer(nn.Module):
         # function 34
         # with torch.no_grad():
         #    self.beta.data.copy_( self.soft_threshold(self.beta) )
-        beta = self.soft_threshold(self.beta) # If you want linear to work for sure, use this line
-        # z = torch.matmul(X, self.beta.T) + self.ksi  # (B, num_of_units_in_top_layer_of_fully_connected_layers)
-        z = torch.matmul(X, beta.T) + self.ksi # If you want linear to work for sure, use this line
+        # beta = self.soft_threshold(self.beta) # If you want linear to work for sure, use this line
+        z = torch.matmul(X, self.beta.T) + self.ksi  # (B, num_of_units_in_top_layer_of_fully_connected_layers)
+        # z = torch.matmul(X, beta.T) + self.ksi # If you want linear to work for sure, use this line
         activated = F.relu(z)
         return activated
