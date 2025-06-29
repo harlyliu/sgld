@@ -135,7 +135,7 @@ class SgldBayesianRegression:
                 total_grad = self._calculate_total_grad(X_batch, y_batch, sigma_squared, sigma_theta_squared, n, self.model.input_layer.beta, self.model.input_layer.sigma_lambda_squared)
                 beta = self.model.input_layer.beta
                 beta_thresh = self.model.input_layer.soft_threshold(beta)
-                beta.data.copy_(beta_thresh)
+                self.model.input_layer.beta.data.copy_(beta_thresh)
                 with torch.no_grad():
                     # for name, param in self.model.named_parameters():
                     #     print(f"Layer: {name}")
